@@ -30,54 +30,35 @@
 </head>
 <body class="min-h-screen py-16 px-4 selection:bg-neutral-800">
 
-  <!-- Рамка при drag-and-drop -->
+  <!-- Тонка рамка по периметру лише коли тягнете файл -->
   <div id="drag-overlay" class="fixed inset-3 border border-dashed border-neutral-700 pointer-events-none hidden z-50"></div>
 
-  <!-- МІНІМАЛІСТИЧНИЙ ІНДИКАТОР В КУТКУ -->
-  <div class="fixed bottom-4 right-4 z-40 text-[10px] text-neutral-600">
-    <button id="auth-status-btn" onclick="openLoginModal()" class="hover:text-neutral-300 transition-colors uppercase tracking-widest">
-      [enter]
-    </button>
-  </div>
-
-  <!-- ВБУДОВАНЕ ВІКНО ВВОДУ ПАРОЛЯ (замість ненадійного alert/prompt) -->
-  <div id="login-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center hidden">
-    <div class="thin-border bg-[#050505] p-6 max-w-xs w-full mx-4 space-y-4">
-      <div class="text-[11px] text-neutral-400 font-medium">ACCESS_REQUIRED//</div>
-      <input 
-        type="password" 
-        id="pass-input" 
-        placeholder="password..." 
-        class="w-full bg-black border border-neutral-800 p-2 text-xs text-neutral-200 outline-none focus:border-neutral-500"
-      />
-      <div class="flex justify-between items-center text-[10px]">
-        <button onclick="closeLoginModal()" class="text-neutral-600 hover:text-neutral-400">CANCEL [ESC]</button>
-        <button onclick="verifyPassword()" class="border border-neutral-800 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 px-3 py-1">LOGIN_</button>
-      </div>
-    </div>
-  </div>
+  <!-- Сповіщення про вхід -->
+  <div id="toast" class="fixed top-4 right-4 text-[10px] text-neutral-400 bg-neutral-900 border border-neutral-800 px-3 py-1.5 hidden z-50"></div>
 
   <main class="max-w-lg mx-auto">
 
-    <!-- Форма вводу скріншота -->
-    <div id="composer" class="hidden mb-16 thin-border bg-[#030303] p-2 space-y-2.5">
+    <!-- Форма створення поста (З'являється ТІЛЬКИ після paste/drop) -->
+    <form id="composer-form" class="hidden mb-16 thin-border bg-[#030303] p-2 space-y-2.5">
       <img id="preview-img" class="w-full h-auto object-contain max-h-[480px] bg-black" />
-      <div class="flex items-center justify-between text-[10px] text-neutral-600 px-1 pt-1">
-        <span id="compression-info">OPTIMIZING...</span>
-        <span class="text-[9px]">ENTER ↵</span>
+      
+      <div class="flex items-center justify-between text-[10px] text-neutral-500 px-1 pt-1">
+        <span id="status-text">READY</span>
+        <span class="text-[9px] text-neutral-600">ENTER ↵</span>
       </div>
+
       <div class="px-1 border-t border-neutral-900 pt-2">
         <input 
           type="text" 
           id="caption-input" 
-          placeholder="caption... [enter to post, esc to discard]" 
+          placeholder="caption... (enter to submit, esc to cancel)" 
           class="w-full bg-transparent text-xs text-neutral-200 placeholder-neutral-700 outline-none"
           autocomplete="off"
         />
       </div>
-    </div>
+    </form>
 
-    <!-- Стрічка -->
+    <!-- Стрічка постів -->
     <div id="feed" class="space-y-16"></div>
 
   </main>
@@ -85,84 +66,38 @@
   <script>
     const SUPABASE_URL = 'https://zbhcetjbvhpyhadxovjk.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpiaGNldGpidmhweWhhZHhvdmprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAxMTEzMDMsImV4cCI6MjEwNTY4NzMwM30.Y78bcyOzrLWFev0fKc-RtTFrU4Il7M0nG2EdHU-XNC4';
-    
-    // ВАШ ПАРОЛЬ:
-    const ADMIN_PASSWORD = 'admin'; 
 
     const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-    let isAdmin = localStorage.getItem('is_admin') === 'true';
+    // Перевірка прав: якщо відкрили з #admin або вже збережено в пам'яті
+    if (window.location.hash === '#admin') {
+      localStorage.setItem('is_admin', 'true');
+      showToast('[ADMIN_MODE_ENABLED]');
+    }
+
+    const isAdmin = localStorage.getItem('is_admin') === 'true';
+
     let currentBlob = null;
     let isUploading = false;
 
-    const composer = document.getElementById('composer');
+    const form = document.getElementById('composer-form');
     const previewImg = document.getElementById('preview-img');
     const captionInput = document.getElementById('caption-input');
-    const compressionInfo = document.getElementById('compression-info');
+    const statusText = document.getElementById('status-text');
     const dragOverlay = document.getElementById('drag-overlay');
     const feed = document.getElementById('feed');
-    const authBtn = document.getElementById('auth-status-btn');
-    const loginModal = document.getElementById('login-modal');
-    const passInput = document.getElementById('pass-input');
 
-    updateAuthStatusUI();
     loadPosts();
 
-    // Перевірка хешу в URL (якщо відкрити сайт як index.html#admin)
-    if (window.location.hash === '#admin' && !isAdmin) {
-      openLoginModal();
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.innerText = msg;
+      t.classList.remove('hidden');
+      setTimeout(() => t.classList.add('hidden'), 3000);
     }
 
-    // 1. КЕРУВАННЯ АДМІНКОЮ ТА ВХОДОМ
-    function updateAuthStatusUI() {
-      if (isAdmin) {
-        authBtn.innerHTML = '<span class="text-neutral-500">[admin · exit]</span>';
-      } else {
-        authBtn.innerHTML = '[enter]';
-      }
-    }
-
-    function openLoginModal() {
-      if (isAdmin) {
-        // Якщо вже адмін — клік виходить із системи
-        if (confirm('LOGOUT?')) {
-          localStorage.removeItem('is_admin');
-          isAdmin = false;
-          updateAuthStatusUI();
-          loadPosts();
-        }
-        return;
-      }
-      loginModal.classList.remove('hidden');
-      passInput.value = '';
-      setTimeout(() => passInput.focus(), 50);
-    }
-
-    function closeLoginModal() {
-      loginModal.classList.add('hidden');
-    }
-
-    function verifyPassword() {
-      if (passInput.value === ADMIN_PASSWORD) {
-        localStorage.setItem('is_admin', 'true');
-        isAdmin = true;
-        closeLoginModal();
-        updateAuthStatusUI();
-        loadPosts();
-      } else {
-        alert('WRONG_KEY');
-        passInput.value = '';
-        passInput.focus();
-      }
-    }
-
-    passInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') verifyPassword();
-      if (e.key === 'Escape') closeLoginModal();
-    });
-
-    // 2. СТИСНЕННЯ ЗОБРАЖЕНЬ (WebP ~70KB)
-    async function compressImage(file, maxWidth = 1800, quality = 0.8) {
+    // 1. СТИСНЕННЯ ЗОБРАЖЕННЯ (WebP)
+    async function compressImage(file) {
       return new Promise((resolve) => {
         const img = new Image();
         img.src = URL.createObjectURL(file);
@@ -170,43 +105,44 @@
           URL.revokeObjectURL(img.src);
           let w = img.width;
           let h = img.height;
+          const max = 1800;
 
-          if (w > maxWidth) {
-            h = Math.round((h * maxWidth) / w);
-            w = maxWidth;
+          if (w > max) {
+            h = Math.round((h * max) / w);
+            w = max;
           }
 
           const canvas = document.createElement('canvas');
           canvas.width = w;
           canvas.height = h;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0, w, h);
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
 
           canvas.toBlob((blob) => {
-            resolve(blob);
-          }, 'image/webp', quality);
+            resolve(blob || file);
+          }, 'image/webp', 0.8);
         };
+        img.onerror = () => resolve(file);
       });
     }
 
-    async function handleIncomingFile(file) {
+    // Обробка файлу
+    async function handleFile(file) {
       if (!isAdmin || !file || !file.type.startsWith('image/')) return;
 
-      const originalSize = (file.size / 1024).toFixed(0);
-      compressionInfo.innerText = `COMPRESSING [ORIGINAL: ${originalSize}KB]...`;
-      composer.classList.remove('hidden');
+      statusText.innerText = 'OPTIMIZING...';
+      form.classList.remove('hidden');
+      previewImg.src = URL.createObjectURL(file);
 
       currentBlob = await compressImage(file);
-      const newSize = (currentBlob.size / 1024).toFixed(0);
-
-      previewImg.src = URL.createObjectURL(currentBlob);
-      compressionInfo.innerText = `READY_WEBP [${newSize}KB]`;
+      const sizeKb = (currentBlob.size / 1024).toFixed(0);
+      statusText.innerText = `READY [${sizeKb}KB]`;
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      captionInput.value = '';
       setTimeout(() => captionInput.focus(), 50);
     }
 
-    // 3. CTRL + V
+    // 2. ВСТАВКА (CTRL + V)
     window.addEventListener('paste', (e) => {
       if (!isAdmin) return;
       const items = e.clipboardData?.items;
@@ -214,13 +150,13 @@
 
       for (const item of items) {
         if (item.type.includes('image')) {
-          handleIncomingFile(item.getAsFile());
+          handleFile(item.getAsFile());
           break;
         }
       }
     });
 
-    // 4. DRAG & DROP
+    // 3. DRAG & DROP
     let dragCounter = 0;
     window.addEventListener('dragenter', (e) => {
       if (!isAdmin) return;
@@ -247,60 +183,76 @@
       dragCounter = 0;
       dragOverlay.classList.add('hidden');
       if (e.dataTransfer.files?.[0]) {
-        handleIncomingFile(e.dataTransfer.files[0]);
+        handleFile(e.dataTransfer.files[0]);
       }
     });
 
-    // 5. ВІДПРАВКА В БАЗУ
-    captionInput.addEventListener('keydown', async (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (!currentBlob || isUploading) return;
+    // 4. НАДІЙНА ВІДПРАВКА ЧЕРЕЗ SUBMIT ФОРМИ (ENTER)
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!currentBlob || isUploading) return;
 
-        isUploading = true;
-        captionInput.disabled = true;
-        compressionInfo.innerText = 'SYNCING_TO_CLOUD...';
+      isUploading = true;
+      captionInput.disabled = true;
+      statusText.innerText = 'UPLOADING TO STORAGE...';
 
-        try {
-          const fileName = `${Date.now()}.webp`;
-          const { error: uploadError } = await supabase.storage
-            .from('shots')
-            .upload(fileName, currentBlob, { contentType: 'image/webp' });
+      try {
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
 
-          if (uploadError) throw uploadError;
+        // 1. Завантаження файлу в сховище
+        const { error: uploadError } = await supabase.storage
+          .from('shots')
+          .upload(fileName, currentBlob, { contentType: 'image/webp' });
 
-          const { data: { publicUrl } } = supabase.storage
-            .from('shots')
-            .getPublicUrl(fileName);
-
-          const caption = captionInput.value.trim();
-          const { error: dbError } = await supabase
-            .from('posts')
-            .insert([{ image_url: publicUrl, caption: caption }]);
-
-          if (dbError) throw dbError;
-
-          closeComposer();
-          await loadPosts();
-        } catch (err) {
-          alert('Upload failed: ' + err.message);
-        } finally {
-          isUploading = false;
-          captionInput.disabled = false;
+        if (uploadError) {
+          throw new Error('Storage: ' + uploadError.message);
         }
-      } else if (e.key === 'Escape') {
-        closeComposer();
+
+        statusText.innerText = 'SAVING RECORD...';
+
+        // 2. Публічне посилання
+        const { data: { publicUrl } } = supabase.storage
+          .from('shots')
+          .getPublicUrl(fileName);
+
+        // 3. Збереження в таблицю
+        const caption = captionInput.value.trim();
+        const { error: dbError } = await supabase
+          .from('posts')
+          .insert([{ image_url: publicUrl, caption: caption }]);
+
+        if (dbError) {
+          throw new Error('Database: ' + dbError.message);
+        }
+
+        // Успіх
+        closeForm();
+        await loadPosts();
+      } catch (err) {
+        // Помилка відображається прямо у формі
+        statusText.innerText = 'ERROR: ' + err.message;
+        console.error(err);
+      } finally {
+        isUploading = false;
+        captionInput.disabled = false;
       }
     });
 
-    function closeComposer() {
+    // Скасування по ESC
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !form.classList.contains('hidden')) {
+        closeForm();
+      }
+    });
+
+    function closeForm() {
       currentBlob = null;
       previewImg.src = '';
       captionInput.value = '';
-      composer.classList.add('hidden');
+      form.classList.add('hidden');
     }
 
-    // 6. СТРІЧКА ПОСТІВ
+    // 5. ЗАВАНТАЖЕННЯ СТРІЧКИ
     async function loadPosts() {
       const { data, error } = await supabase
         .from('posts')
@@ -327,17 +279,15 @@
       `).join('');
     }
 
-    // 7. ВИДАЛЕННЯ
+    // 6. ВИДАЛЕННЯ
     async function deletePost(id, imageUrl) {
       if (!confirm('DELETE_RECORD?')) return;
       
       await supabase.from('posts').delete().eq('id', id);
-      
       const fileName = imageUrl.split('/').pop();
       if (fileName) {
         await supabase.storage.from('shots').remove([fileName]);
       }
-
       loadPosts();
     }
 
