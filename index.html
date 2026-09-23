@@ -80,7 +80,7 @@
 
   </main>
 
-  <script>
+<script>
     // 1. ВАШІ ДАНІ SUPABASE
     const SUPABASE_URL = 'https://zbhcetjbvhpyhadxovjk.supabase.co';
     const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpiaGNldGpidmhweWhhZHhvdmprIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAxMTEzMDMsImV4cCI6MjEwNTY4NzMwM30.Y78bcyOzrLWFev0fKc-RtTFrU4Il7M0nG2EdHU-XNC4';
@@ -88,7 +88,8 @@
     // 2. ВСТАНОВІТЬ СВІЙ ПАРОЛЬ ТУТ:
     const ADMIN_PASSWORD = 'admin'; 
 
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // ВИПРАВЛЕНО: названо supabaseClient замість supabase
+    const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     let isAdmin = localStorage.getItem('is_admin') === 'true';
     let currentBlob = null;
@@ -246,7 +247,7 @@
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
 
         // 1. Завантаження файлу
-        const { error: uploadError } = await supabase.storage
+        const { error: uploadError } = await supabaseClient.storage
           .from('shots')
           .upload(fileName, currentBlob, { contentType: 'image/webp' });
 
@@ -255,13 +256,13 @@
         statusText.innerText = 'SAVING RECORD...';
 
         // 2. Публічне посилання
-        const { data: { publicUrl } } = supabase.storage
+        const { data: { publicUrl } } = supabaseClient.storage
           .from('shots')
           .getPublicUrl(fileName);
 
         // 3. Запис у базу
         const caption = captionInput.value.trim();
-        const { error: dbError } = await supabase
+        const { error: dbError } = await supabaseClient
           .from('posts')
           .insert([{ image_url: publicUrl, caption: caption }]);
 
@@ -294,7 +295,7 @@
 
     // ЗАВАНТАЖЕННЯ СТРІЧКИ
     async function loadPosts() {
-      const { data, error } = await supabase
+      const { data, error } = await supabaseClient
         .from('posts')
         .select('*')
         .order('created_at', { ascending: false });
@@ -323,10 +324,10 @@
     async function deletePost(id, imageUrl) {
       if (!confirm('DELETE_RECORD?')) return;
       
-      await supabase.from('posts').delete().eq('id', id);
+      await supabaseClient.from('posts').delete().eq('id', id);
       const fileName = imageUrl.split('/').pop();
       if (fileName) {
-        await supabase.storage.from('shots').remove([fileName]);
+        await supabaseClient.storage.from('shots').remove([fileName]);
       }
       loadPosts();
     }
