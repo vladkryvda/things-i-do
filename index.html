@@ -27,6 +27,11 @@
     .thin-border-b {
       border-bottom: 1px solid #111111;
     }
+    /* Стиль для автозбільшення текстового поля */
+    textarea {
+      field-sizing: content; /* Працює в нових браузерах */
+      resize: none;
+    }
   </style>
 </head>
 <body class="min-h-screen py-16 px-4 selection:bg-neutral-800" ondblclick="triggerAuthModal()">
@@ -36,6 +41,12 @@
 
   <!-- Тонкі сповіщення в кутку -->
   <div id="toast" class="fixed top-4 right-4 text-[10px] text-neutral-400 bg-neutral-950 border border-neutral-800 px-3 py-1.5 hidden z-50"></div>
+
+  <!-- Лайтбокс (відкриття фото на весь екран) -->
+  <div id="lightbox" class="fixed inset-0 bg-black/95 z-[60] hidden flex items-center justify-center p-4 cursor-zoom-out" onclick="closeLightbox()">
+    <img id="lightbox-img" class="max-w-full max-h-full object-contain select-none shadow-2xl" src="" alt="Full view" />
+    <span class="absolute top-4 right-6 text-[10px] text-neutral-600">ESC / CLICK TO CLOSE</span>
+  </div>
 
   <!-- Приховане вікно вводу пароля (відкривається подвійним кліком) -->
   <div id="auth-modal" class="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center hidden">
@@ -62,17 +73,16 @@
       
       <div class="flex items-center justify-between text-[10px] text-neutral-500 px-1 pt-1">
         <span id="status-text">READY</span>
-        <span class="text-[9px] text-neutral-600">ENTER ↵</span>
+        <span class="text-[9px] text-neutral-600">⌘+ENTER TO POST • ENTER FOR NEWLINE</span>
       </div>
 
       <div class="px-1 border-t border-neutral-900 pt-2">
-        <input 
-          type="text" 
+        <textarea 
           id="caption-input" 
-          placeholder="caption... (enter to submit, esc to cancel)" 
-          class="w-full bg-transparent text-xs text-neutral-200 placeholder-neutral-700 outline-none"
-          autocomplete="off"
-        />
+          rows="2"
+          placeholder="what did you build / fix? (enter for newline, ⌘+enter to post)..." 
+          class="w-full bg-transparent text-xs text-neutral-200 placeholder-neutral-700 outline-none leading-relaxed block"
+        ></textarea>
       </div>
     </form>
 
@@ -89,7 +99,6 @@
     // 2. ВСТАНОВІТЬ СВІЙ ПАРОЛЬ ТУТ:
     const ADMIN_PASSWORD = 'admin'; 
 
-    // ВИПРАВЛЕНО: названо supabaseClient замість supabase
     const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     let isAdmin = localStorage.getItem('is_admin') === 'true';
@@ -104,8 +113,9 @@
     const feed = document.getElementById('feed');
     const authModal = document.getElementById('auth-modal');
     const passInput = document.getElementById('pass-input');
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightbox-img');
 
-    // Перевірка хешу в URL при відкритті
     if (window.location.hash === '#admin') {
       triggerAuthModal();
     }
@@ -122,7 +132,7 @@
     // ЛОГІКА АВТОРИЗАЦІЇ
     function triggerAuthModal() {
       if (isAdmin) {
-        showToast('[ALREADY_LOGGED_IN_AS_ADMIN]');
+        showToast('[ALREADY_LOGGED_IN]');
         return;
       }
       authModal.classList.remove('hidden');
@@ -147,6 +157,19 @@
       }
     });
 
+    // LIGHTBOX
+    function openLightbox(src) {
+      lightboxImg.src = src;
+      lightbox.classList.remove('hidden');
+      document.body.classList.add('overflow-hidden');
+    }
+
+    function closeLightbox() {
+      lightbox.classList.add('hidden');
+      lightboxImg.src = '';
+      document.body.classList.remove('overflow-hidden');
+    }
+
     // СТИСНЕННЯ КАРТИНОК У WEBP
     async function compressImage(file) {
       return new Promise((resolve) => {
@@ -156,7 +179,7 @@
           URL.revokeObjectURL(img.src);
           let w = img.width;
           let h = img.height;
-          const max = 1800;
+          const max = 2000;
 
           if (w > max) {
             h = Math.round((h * max) / w);
@@ -168,7 +191,7 @@
           canvas.height = h;
           canvas.getContext('2d').drawImage(img, 0, 0, w, h);
 
-          canvas.toBlob((blob) => resolve(blob || file), 'image/webp', 0.8);
+          canvas.toBlob((blob) => resolve(blob || file), 'image/webp', 0.85);
         };
         img.onerror = () => resolve(file);
       });
@@ -194,7 +217,7 @@
       setTimeout(() => captionInput.focus(), 50);
     }
 
-    // ВСТАВКА (CTRL + V)
+    // ВСТАВКА (CTRL + V / CMD + V)
     window.addEventListener('paste', (e) => {
       const items = e.clipboardData?.items;
       if (!items) return;
@@ -235,9 +258,22 @@
       }
     });
 
-    // ВІДПРАВКА НА СЕРВЕР (ENTER)
-    form.addEventListener('submit', async (e) => {
+    // ОБРОБКА КЛАВІШ В ПОЛІ ВВОДУ:
+    // Enter = новий рядок, Cmd+Enter / Ctrl+Enter = відправка
+    captionInput.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        submitPost();
+      }
+    });
+
+    // ВІДПРАВКА НА СЕРВЕР
+    form.addEventListener('submit', (e) => {
       e.preventDefault();
+      submitPost();
+    });
+
+    async function submitPost() {
       if (!currentBlob || isUploading) return;
 
       isUploading = true;
@@ -247,7 +283,6 @@
       try {
         const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
 
-        // 1. Завантаження файлу
         const { error: uploadError } = await supabaseClient.storage
           .from('shots')
           .upload(fileName, currentBlob, { contentType: 'image/webp' });
@@ -256,12 +291,10 @@
 
         statusText.innerText = 'SAVING RECORD...';
 
-        // 2. Публічне посилання
         const { data: { publicUrl } } = supabaseClient.storage
           .from('shots')
           .getPublicUrl(fileName);
 
-        // 3. Запис у базу
         const caption = captionInput.value.trim();
         const { error: dbError } = await supabaseClient
           .from('posts')
@@ -279,11 +312,16 @@
         isUploading = false;
         captionInput.disabled = false;
       }
-    });
+    }
 
+    // ESCAPE ДЛЯ ЗАКРИТТЯ ЛАЙТБОКСУ / ФОРМИ
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !form.classList.contains('hidden')) {
-        closeForm();
+      if (e.key === 'Escape') {
+        if (!lightbox.classList.contains('hidden')) {
+          closeLightbox();
+        } else if (!form.classList.contains('hidden')) {
+          closeForm();
+        }
       }
     });
 
@@ -307,14 +345,20 @@
         <article class="group thin-border bg-[#020202]">
           <div class="px-2.5 py-1.5 thin-border-b bg-black flex justify-between items-center text-[10px] text-neutral-600 select-none">
             <span>${formatDate(post.created_at)}</span>
-            ${isAdmin ? `<button onclick="deletePost(${post.id}, '${post.image_url}')" class="opacity-0 group-hover:opacity-100 hover:text-neutral-300">×</button>` : ''}
+            ${isAdmin ? `<button onclick="deletePost(${post.id}, '${post.image_url}')" class="opacity-0 group-hover:opacity-100 hover:text-red-400">DELETE ×</button>` : ''}
           </div>
           <div class="p-1">
-            <img src="${post.image_url}" alt="" loading="lazy" class="w-full h-auto object-contain bg-black">
+            <img 
+              src="${post.image_url}" 
+              alt="Screenshot" 
+              loading="lazy" 
+              onclick="openLightbox('${post.image_url}')"
+              class="w-full h-auto object-contain bg-black cursor-zoom-in hover:opacity-95 transition-opacity"
+            />
           </div>
           ${post.caption ? `
-            <div class="px-3 py-2 text-xs text-neutral-400 font-light leading-relaxed">
-              ${escape(post.caption)}
+            <div class="px-3 py-2.5 text-xs text-neutral-300 font-light leading-relaxed whitespace-pre-line border-t border-neutral-900/60">
+              ${formatCaption(post.caption)}
             </div>
           ` : ''}
         </article>
@@ -339,10 +383,16 @@
              `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     }
 
-    function escape(str) {
+    // Автоматичне перетворення посилань на клікабельні + захист від XSS
+    function formatCaption(str) {
       const d = document.createElement('div');
       d.innerText = str;
-      return d.innerHTML;
+      const safe = d.innerHTML;
+      
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      return safe.replace(urlRegex, (url) => 
+        `<a href="${url}" target="_blank" rel="noopener noreferrer" class="text-neutral-400 underline underline-offset-4 hover:text-white">${url}</a>`
+      );
     }
   </script>
 </body>
