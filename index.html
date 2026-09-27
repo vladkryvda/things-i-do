@@ -27,9 +27,8 @@
     .thin-border-b {
       border-bottom: 1px solid #111111;
     }
-    /* Стиль для автозбільшення текстового поля */
     textarea {
-      field-sizing: content; /* Працює в нових браузерах */
+      field-sizing: content;
       resize: none;
     }
   </style>
@@ -76,13 +75,17 @@
         <span class="text-[9px] text-neutral-600">⌘+ENTER TO POST • ENTER FOR NEWLINE</span>
       </div>
 
-      <div class="px-1 border-t border-neutral-900 pt-2">
+      <div class="px-1 border-t border-neutral-900 pt-2 flex flex-col gap-1">
         <textarea 
           id="caption-input" 
           rows="2"
           placeholder="what did you build / fix? (enter for newline, ⌘+enter to post)..." 
           class="w-full bg-transparent text-xs text-neutral-200 placeholder-neutral-700 outline-none leading-relaxed block"
         ></textarea>
+        <!-- Лічильник символів (Anti-essay) -->
+        <div class="flex justify-end items-center px-0.5">
+          <span id="char-counter" class="text-[9px] text-neutral-600 select-none">280</span>
+        </div>
       </div>
     </form>
 
@@ -108,6 +111,7 @@
     const form = document.getElementById('composer-form');
     const previewImg = document.getElementById('preview-img');
     const captionInput = document.getElementById('caption-input');
+    const charCounter = document.getElementById('char-counter');
     const statusText = document.getElementById('status-text');
     const dragOverlay = document.getElementById('drag-overlay');
     const feed = document.getElementById('feed');
@@ -214,6 +218,7 @@
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
       captionInput.value = '';
+      updateCharCounter();
       setTimeout(() => captionInput.focus(), 50);
     }
 
@@ -258,8 +263,24 @@
       }
     });
 
-    // ОБРОБКА КЛАВІШ В ПОЛІ ВВОДУ:
-    // Enter = новий рядок, Cmd+Enter / Ctrl+Enter = відправка
+    // ОНОВЛЕННЯ ЛІЧИЛЬНИКА СИМВОЛІВ
+    function updateCharCounter() {
+      const len = captionInput.value.length;
+      const remaining = 280 - len;
+      charCounter.innerText = remaining;
+
+      if (remaining < 0) {
+        charCounter.className = 'text-[9px] text-red-500 font-medium select-none';
+      } else if (remaining <= 20) {
+        charCounter.className = 'text-[9px] text-amber-500 select-none';
+      } else {
+        charCounter.className = 'text-[9px] text-neutral-600 select-none';
+      }
+    }
+
+    captionInput.addEventListener('input', updateCharCounter);
+
+    // ОБРОБКА КЛАВІШ В ПОЛІ ВВОДУ
     captionInput.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
         e.preventDefault();
@@ -329,6 +350,7 @@
       currentBlob = null;
       previewImg.src = '';
       captionInput.value = '';
+      updateCharCounter();
       form.classList.add('hidden');
     }
 
@@ -383,7 +405,6 @@
              `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     }
 
-    // Автоматичне перетворення посилань на клікабельні + захист від XSS
     function formatCaption(str) {
       const d = document.createElement('div');
       d.innerText = str;
