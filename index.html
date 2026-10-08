@@ -35,19 +35,6 @@
 </head>
 <body class="min-h-screen py-16 px-4 selection:bg-neutral-800" ondblclick="triggerAuthModal()">
 
-  <!-- Кнопка створення поста справа внизу -->
-  <button 
-    id="create-btn" 
-    onclick="openTextComposer()" 
-    title="Create post"
-    class="fixed bottom-6 right-6 z-40 w-11 h-11 thin-border bg-[#050505] hover:bg-[#111111] text-neutral-400 hover:text-neutral-100 flex items-center justify-center transition-all duration-150 active:scale-95 shadow-xl shadow-black/80"
-  >
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-      <line x1="12" y1="5" x2="12" y2="19"></line>
-      <line x1="6" y1="12" x2="18" y2="12"></line>
-    </svg>
-  </button>
-
   <!-- Рамка при drag-and-drop -->
   <div id="drag-overlay" class="fixed inset-3 border border-dashed border-neutral-700 pointer-events-none hidden z-50"></div>
 
@@ -79,9 +66,9 @@
 
   <main class="max-w-lg mx-auto">
 
-    <!-- Форма нового поста -->
+    <!-- Форма нового поста (з'являється лише після вставки картинки) -->
     <form id="composer-form" class="hidden mb-16 thin-border bg-[#030303] p-2 space-y-2.5">
-      <img id="preview-img" class="w-full h-auto object-contain max-h-[480px] bg-black hidden" />
+      <img id="preview-img" class="w-full h-auto object-contain max-h-[480px] bg-black" />
       
       <div class="flex items-center justify-between text-[10px] text-neutral-500 px-1 pt-1">
         <span id="status-text">READY</span>
@@ -174,26 +161,6 @@
       }
     });
 
-    // ВІДКРИТТЯ ФОРМИ ДЛЯ ТЕКСТОВОГО ПОСТА
-    function openTextComposer() {
-      if (!isAdmin) {
-        triggerAuthModal();
-        return;
-      }
-
-      currentBlob = null;
-      previewImg.src = '';
-      previewImg.classList.add('hidden');
-
-      statusText.innerText = 'TEXT ONLY';
-      form.classList.remove('hidden');
-      captionInput.value = '';
-      updateCharCounter();
-
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      setTimeout(() => captionInput.focus(), 50);
-    }
-
     // LIGHTBOX
     function openLightbox(src) {
       lightboxImg.src = src;
@@ -243,7 +210,6 @@
 
       statusText.innerText = 'OPTIMIZING...';
       form.classList.remove('hidden');
-      previewImg.classList.remove('hidden');
       previewImg.src = URL.createObjectURL(file);
 
       currentBlob = await compressImage(file);
@@ -329,42 +295,31 @@
     });
 
     async function submitPost() {
-      const caption = captionInput.value.trim();
-      
-      // Не відправляти, якщо немає ні тексту, ні фото, або вже триває завантаження
-      if ((!currentBlob && !caption) || isUploading) return;
+      if (!currentBlob || isUploading) return;
 
       isUploading = true;
       captionInput.disabled = true;
+      statusText.innerText = 'UPLOADING TO STORAGE...';
 
       try {
-        let publicUrl = null;
+        const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
 
-        if (currentBlob) {
-          statusText.innerText = 'UPLOADING TO STORAGE...';
-          const fileName = `${Date.now()}_${Math.random().toString(36).substring(2, 7)}.webp`;
+        const { error: uploadError } = await supabaseClient.storage
+          .from('shots')
+          .upload(fileName, currentBlob, { contentType: 'image/webp' });
 
-          const { error: uploadError } = await supabaseClient.storage
-            .from('shots')
-            .upload(fileName, currentBlob, { contentType: 'image/webp' });
-
-          if (uploadError) throw new Error('Storage: ' + uploadError.message);
-
-          const { data: urlData } = supabaseClient.storage
-            .from('shots')
-            .getPublicUrl(fileName);
-
-          publicUrl = urlData.publicUrl;
-        }
+        if (uploadError) throw new Error('Storage: ' + uploadError.message);
 
         statusText.innerText = 'SAVING RECORD...';
 
+        const { data: { publicUrl } } = supabaseClient.storage
+          .from('shots')
+          .getPublicUrl(fileName);
+
+        const caption = captionInput.value.trim();
         const { error: dbError } = await supabaseClient
           .from('posts')
-          .insert([{ 
-            image_url: publicUrl, 
-            caption: caption || null 
-          }]);
+          .insert([{ image_url: publicUrl, caption: caption }]);
 
         if (dbError) throw new Error('Database: ' + dbError.message);
 
@@ -394,7 +349,6 @@
     function closeForm() {
       currentBlob = null;
       previewImg.src = '';
-      previewImg.classList.add('hidden');
       captionInput.value = '';
       updateCharCounter();
       form.classList.add('hidden');
@@ -413,21 +367,19 @@
         <article class="group thin-border bg-[#020202]">
           <div class="px-2.5 py-1.5 thin-border-b bg-black flex justify-between items-center text-[10px] text-neutral-600 select-none">
             <span>${formatDate(post.created_at)}</span>
-            ${isAdmin ? `<button onclick="deletePost(${post.id}, '${post.image_url || ''}')" class="opacity-0 group-hover:opacity-100 hover:text-red-400">DELETE ×</button>` : ''}
+            ${isAdmin ? `<button onclick="deletePost(${post.id}, '${post.image_url}')" class="opacity-0 group-hover:opacity-100 hover:text-red-400">DELETE ×</button>` : ''}
           </div>
-          ${post.image_url ? `
-            <div class="p-1">
-              <img 
-                src="${post.image_url}" 
-                alt="Screenshot" 
-                loading="lazy" 
-                onclick="openLightbox('${post.image_url}')"
-                class="w-full h-auto object-contain bg-black cursor-zoom-in hover:opacity-95 transition-opacity"
-              />
-            </div>
-          ` : ''}
+          <div class="p-1">
+            <img 
+              src="${post.image_url}" 
+              alt="Screenshot" 
+              loading="lazy" 
+              onclick="openLightbox('${post.image_url}')"
+              class="w-full h-auto object-contain bg-black cursor-zoom-in hover:opacity-95 transition-opacity"
+            />
+          </div>
           ${post.caption ? `
-            <div class="px-3 py-2.5 text-xs text-neutral-300 font-light leading-relaxed whitespace-pre-line ${post.image_url ? 'border-t border-neutral-900/60' : ''}">
+            <div class="px-3 py-2.5 text-xs text-neutral-300 font-light leading-relaxed whitespace-pre-line border-t border-neutral-900/60">
               ${formatCaption(post.caption)}
             </div>
           ` : ''}
@@ -440,12 +392,9 @@
       if (!confirm('DELETE_RECORD?')) return;
       
       await supabaseClient.from('posts').delete().eq('id', id);
-      
-      if (imageUrl && imageUrl !== 'null' && imageUrl !== 'undefined') {
-        const fileName = imageUrl.split('/').pop();
-        if (fileName) {
-          await supabaseClient.storage.from('shots').remove([fileName]);
-        }
+      const fileName = imageUrl.split('/').pop();
+      if (fileName) {
+        await supabaseClient.storage.from('shots').remove([fileName]);
       }
       loadPosts();
     }
